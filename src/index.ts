@@ -12,10 +12,20 @@ import {
 	Validator,
 	InferType,
 	fallback,
+	either,
+	number,
+	boolean,
+	exact,
+	predicate,
+	any,
+	arrayOf,
+	objectOf,
+	lazy,
+	ValidationResult,
 } from "./validator";
 import * as path from "path";
 
-const instanceDomain = process.env.DOMAIN;
+const instanceHost = process.env.HOST;
 
 const databasePath = path.resolve(`${__dirname}/../database.json`);
 
@@ -30,17 +40,17 @@ const json = <T>(v: Validator<T>) =>
 		v
 	);
 
-const userSchema = json(
-	object({
-		id: string(),
-		name: string(),
-		summary: fallback(string(), () => ""),
-	})
-);
+const userSchema = object({
+	username: string(),
+	name: string(),
+	summary: fallback(string(), () => ""),
+});
 
 type User = InferType<typeof userSchema> & {
 	published: string;
 	profilePicture: string;
+	following: string[];
+	followers: string[];
 };
 
 type Db = {
@@ -58,6 +68,14 @@ async function getDb(): Promise<Db> {
 	);
 	return db;
 }
+
+async function getUsers(): Promise<User[]> {
+	const db = await getDb();
+	return db.users || [];
+}
+
+const getUser = async (username: string): Promise<User | null> =>
+	(await getUsers()).find((u) => u.username === username) || null;
 
 async function saveDb(partial: Partial<Db>) {
 	const db = await getDb();
@@ -84,27 +102,31 @@ router.post("/users", async (ctx, next) => {
 	const validation = userSchema.validate(ctx.request.body);
 	if (!validation.isValid) {
 		ctx.response.status = 400;
+		console.log(validation.error);
 		return;
 	}
 	const newUser = validation.value;
 
-	const db = await getDb();
-	const users = db.users || [];
-
-	const user = users.find((v) => v.id === newUser.id);
+	const user = await getUser(newUser.username);
 	if (user) {
 		ctx.response.status = 409;
 		return;
 	}
+
+	const users = await getUsers();
 
 	users.push({
 		...newUser,
 		published: new Date().toISOString(),
 		profilePicture:
 			"https://static-cdn.mastodon.social/avatars/original/missing.png",
+		following: [],
+		followers: [],
 	});
 
 	await saveDb({ users });
+
+	ctx.response.body = { success: true };
 });
 
 router.get("/.well-known/webfinger", async (ctx, next) => {
@@ -118,7 +140,7 @@ router.get("/.well-known/webfinger", async (ctx, next) => {
 	try {
 		const { username, domain } = parseWebFingerResource(resource);
 
-		if (domain !== instanceDomain) {
+		if (domain !== instanceHost) {
 			ctx.response.status = 501;
 			return;
 		}
@@ -126,7 +148,7 @@ router.get("/.well-known/webfinger", async (ctx, next) => {
 		const db = await getDb();
 		const users = db.users || [];
 
-		const user = users.find((v) => v.id === username);
+		const user = users.find((v) => v.username === username);
 		if (!user) {
 			ctx.response.status = 400;
 			return;
@@ -147,7 +169,7 @@ router.get("/.well-known/webfinger", async (ctx, next) => {
 				{
 					rel: "self",
 					type: "application/activity+json",
-					href: `https://${instanceDomain}/users/manlycoffee`,
+					href: `https://${instanceHost}/users/manlycoffee`,
 				},
 				// {
 				// 	rel: "http://ostatus.org/schema/1.0/subscribe",
@@ -162,6 +184,14 @@ router.get("/.well-known/webfinger", async (ctx, next) => {
 });
 
 router.get("/users/:id", async (ctx, next) => {});
+
+router.get("/users/:id/following", async (ctx, next) => {});
+
+router.get("/users/:id/followers", async (ctx, next) => {});
+
+router.get("/users/:id/inbox", async (ctx, next) => {});
+
+router.post("/users/:id/outbox", async (ctx, next) => {});
 
 app.use(router.routes());
 

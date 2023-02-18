@@ -1,6 +1,6 @@
 {
 	"scripts": {
-		"dev": "nodemon"
+		"dev": "env $(cat .env) nodemon"
 	},
 	"dependencies": {
 		"koa": "^2.14.1",
